@@ -1,0 +1,5 @@
+#!/bin/bash
+# CodeRabbit Comment Parser
+# Usage: coderabbit-parse [options]
+
+exec python3 "$HOME/bin/coderabbit-tools/parse_coderabbit_comments_v2.py" "$@"

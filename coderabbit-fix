@@ -1,0 +1,5 @@
+#!/bin/bash
+# CodeRabbit Complete Pipeline
+# Usage: coderabbit-fix [repo] pr_number [options]
+
+exec python3 "$HOME/bin/coderabbit-tools/coderabbit_pipeline.py" "$@"

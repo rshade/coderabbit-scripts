@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_backend"
+
+[project]
+name = "coderabbit-scripts"
+version = "1.0.0"
+description = "Automation toolkit for processing CodeRabbit AI code review comments and applying fixes"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Richard Shade", email = "rshade@users.noreply.github.com"},
+]
+keywords = ["coderabbit", "github", "automation", "code-review", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+requires-python = ">=3.6"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/rshade/coderabbit-scripts"
+Repository = "https://github.com/rshade/coderabbit-scripts"
+"Bug Tracker" = "https://github.com/rshade/coderabbit-scripts/issues"
+
+[project.scripts]
+coderabbit-fetch = "coderabbit_tools.fetch_github_comments:main"
+coderabbit-parse = "coderabbit_tools.parse_coderabbit_comments_v2:main"
+coderabbit-apply = "coderabbit_tools.apply_coderabbit_fixes_v2:main"
+coderabbit-pipeline = "coderabbit_tools.coderabbit_pipeline:main"
+coderabbit-fast = "coderabbit_tools.coderabbit_fast:main"
+coderabbit-ai-only = "coderabbit_tools.coderabbit_ai_only:main"
+coderabbit-ai-formatter = "coderabbit_tools.coderabbit_ai_formatter:main"
+
+[tool.setuptools]
+packages = ["coderabbit_tools"]
+
+[tool.setuptools.package-data]
+coderabbit_tools = ["*.py"]

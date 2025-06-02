@@ -1,0 +1,5 @@
+#!/bin/bash
+# CodeRabbit Fix Applicator
+# Usage: coderabbit-apply [options]
+
+exec python3 "$HOME/bin/coderabbit-tools/apply_coderabbit_fixes_v2.py" "$@"

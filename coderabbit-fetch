@@ -1,0 +1,5 @@
+#!/bin/bash
+# CodeRabbit GitHub Comment Fetcher
+# Usage: coderabbit-fetch [repo] pr_number [options]
+
+exec python3 "$HOME/bin/coderabbit-tools/fetch_github_comments.py" "$@"
