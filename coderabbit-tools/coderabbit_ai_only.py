@@ -194,7 +194,7 @@ def format_for_ai(items: List[Dict], pr_number: int) -> Dict:
     }
 
 
-def execute_post_fix_commands(commands: List[str]) -> None:
+def execute_post_fix_commands(commands: List[str], args) -> None:
     """Execute the post-fix commands and report their status."""
     for cmd in commands:
         try:
@@ -276,7 +276,7 @@ Examples:
         # Execute post-fix commands
         if not args.quiet:
             print("\n🔧 Running post-fix commands...", file=sys.stderr)
-        execute_post_fix_commands(result['post_fix_commands'])
+        execute_post_fix_commands(result['post_fix_commands'], args)
             
     except subprocess.CalledProcessError as e:
         print(f"❌ GitHub API error: {e}", file=sys.stderr)

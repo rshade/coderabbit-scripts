@@ -1,0 +1,5 @@
+#!/bin/bash
+# CodeRabbit Linter - Pre-commit linting to catch common CodeRabbit issues
+# Usage: coderabbit-linter [options]
+
+exec python3 "$(dirname "$0")/coderabbit-tools/coderabbit_linter.py" "$@"

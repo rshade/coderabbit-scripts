@@ -74,4 +74,50 @@ Since there's no formal test suite, test changes by:
 ### Shell Script Conventions
 - All wrapper scripts follow the pattern: `coderabbit-[action]`
 - Scripts pass arguments directly to Python tools
-- Use absolute paths when calling Python scripts from wrappers
+- Use relative paths for portability (e.g., `coderabbit-tools/script.py`)
+
+## Enhanced AI Formatter and Prompts
+
+### CodeRabbit AI Formatter Improvements (2024-12)
+The `coderabbit_ai_formatter.py` was significantly enhanced to address issues where Claude Code would:
+- Create more problems than it solved (100+ new CodeRabbit comments)
+- Only partially complete fixes
+- Create files without EOF newlines causing lint failures
+- Generate markdown files that fail markdownlint
+
+**Key Enhancements Made:**
+- **Psychological conditioning**: Replaced weak "should" language with mandatory "MUST/NEVER" 
+- **Sequential processing lockdown**: Force one-issue-at-a-time with TodoWrite tracking
+- **Bulletproof validation**: Mandatory validation after EVERY edit
+- **File creation standards**: EOF newlines, markdownlint compliance built-in
+- **Error recovery procedures**: Specific rollback and retry protocols
+
+### Optimized User Prompts
+Created two systematic prompts that leverage the enhanced formatter:
+
+**CodeRabbitPrompt.md**: For fixing existing CodeRabbit issues
+- 4-phase structured approach (Analysis → Sequential Resolution → Coverage → Validation)
+- Leverages enhanced AI formatter's built-in safeguards
+- Includes specific codecov improvement strategies
+
+**Github_Development_Prompt.md**: For implementing new GitHub issues  
+- 5-phase approach with mandatory verification checkpoint
+- TodoWrite integration for comprehensive planning
+- Complete testing and documentation requirements
+
+### Critical Success Patterns Discovered
+1. **TodoWrite/TodoRead tools are essential** - Manual tracking leads to incomplete work
+2. **Sequential processing prevents cascade failures** - Never work on multiple issues simultaneously
+3. **Validation after every change** - Batching validation leads to hard-to-debug failures
+4. **Verification checkpoints** - Human approval before coding prevents misinterpretation
+5. **File creation standards** - EOF newlines and markdownlint compliance must be explicit
+6. **Psychological conditioning works** - Strong mandatory language prevents premature completion
+
+### Validation Commands
+Always run these commands after any changes:
+```bash
+make lint && coderabbit-linter && make validate && make test
+```
+
+### New Tools Added
+- `coderabbit-linter`: Pre-commit linting wrapper for `coderabbit_linter.py`

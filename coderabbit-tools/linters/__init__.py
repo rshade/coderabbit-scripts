@@ -1,0 +1,1 @@
+# Linters package for CodeRabbit pre-commit checks

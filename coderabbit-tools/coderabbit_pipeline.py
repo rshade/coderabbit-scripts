@@ -146,6 +146,18 @@ This script chains together:
         help='Use AI formatter to generate structured prompts instead of applying fixes'
     )
     
+    parser.add_argument(
+        '--skip-validation',
+        action='store_true',
+        help='Skip pre-validation checks (make lint, validate, test)'
+    )
+    
+    parser.add_argument(
+        '--prioritize',
+        action='store_true',
+        help='Group issues by priority (high/medium/low) for systematic fixing'
+    )
+    
     args = parser.parse_args()
     
     # Parse repo and PR arguments
@@ -185,12 +197,37 @@ This script chains together:
         os.close(analysis_fd)
         cleanup_files = True
     
+    # Pre-validation checks (unless skipped)
+    if not args.skip_validation and not args.ai_format:
+        print("🔍 Running pre-validation checks...")
+        validation_commands = [
+            (['make', 'lint'], "Linting"),
+            (['make', 'validate'], "Validation"),
+            (['make', 'test'], "Testing")
+        ]
+        
+        for cmd, desc in validation_commands:
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if result.returncode != 0:
+                    print(f"⚠️  {desc} failed. CodeRabbit fixes may address these issues.")
+                    if args.verbose:
+                        print(f"Error output: {result.stderr}")
+                else:
+                    print(f"✅ {desc} passed")
+            except subprocess.TimeoutExpired:
+                print(f"⚠️  {desc} timed out")
+            except FileNotFoundError:
+                print(f"⚠️  {desc} command not found (make {cmd[1]})")
+    
     try:
         if args.ai_format:
             # Use AI formatter directly
             ai_cmd = ['python3', ai_format_script, pr_arg]
             if repo_arg:
                 ai_cmd.append(repo_arg)
+            if args.prioritize:
+                ai_cmd.append('--prioritize')
             
             ai_result = run_command(ai_cmd, "Generating AI-formatted prompts")
             print("✅ AI-formatted prompts generated")

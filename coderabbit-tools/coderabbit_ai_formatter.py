@@ -73,12 +73,186 @@ def get_pr_reviews(pr_number, repo_name=None):
     
     return json.loads(result.stdout)
 
+def extract_detailed_instruction(body):
+    """Extract detailed instructions from CodeRabbit comments, including AI Agents prompts"""
+    
+    # First, look for "Prompt for AI Agents" section specifically
+    ai_prompt_pattern = r'<summary>🤖 Prompt for AI Agents</summary>\s*```(.*?)```'
+    ai_prompt_match = re.search(ai_prompt_pattern, body, re.DOTALL)
+    if ai_prompt_match:
+        return ai_prompt_match.group(1).strip()
+    
+    # Look for collapsible details sections that might contain detailed instructions
+    details_patterns = [
+        r'<summary>🤖 Prompt for AI Agents</summary>\s*(.*?)(?=</details>|$)',
+        r'<details>\s*<summary>.*?</summary>\s*(.*?)(?=</details>|$)',
+        r'```\s*(In [^`]+around lines [^`]+.*?)```',  # Match "In file around lines X to Y, ..."
+    ]
+    
+    for pattern in details_patterns:
+        match = re.search(pattern, body, re.DOTALL | re.IGNORECASE)
+        if match:
+            instruction = match.group(1).strip()
+            # Clean up HTML tags and markdown
+            instruction = re.sub(r'<[^>]+>', '', instruction)
+            instruction = re.sub(r'```[^`]*```', '', instruction)
+            instruction = re.sub(r'\s+', ' ', instruction).strip()
+            if len(instruction) > 50:  # Only use if it's substantial
+                return instruction
+    
+    return None
+
+def extract_review_body_issues(body, reviewer_type="coderabbit"):
+    """Extract actionable issues from review body text"""
+    issues = []
+    
+    # For CodeRabbit, we should NOT extract anything from review bodies
+    # because they contain way too much noise and context.
+    # The real actionable issues are in individual line comments, not review summaries.
+    
+    if reviewer_type == "coderabbit":
+        # CodeRabbit review bodies contain summaries and counts but not the actual actionable issues
+        # The actual issues are in separate PR line comments, which are handled by parse_coderabbit_comment()
+        # 
+        # The "Actionable comments posted: X" and "Duplicate comments (Y)" are just counts,
+        # not the actual actionable content. The content is in individual line comments.
+        return issues
+    
+    elif reviewer_type == "copilot":
+        # Copilot patterns - look for file references and suggestions
+        patterns = [
+            # Pattern: **file.go:line** Description
+            r'\*\*([^*]+\.go):(\d+)\*\*\s*(.*?)(?=\n\*\*|\n```|\n\n|$)',
+            # Pattern: file mentions with suggestions
+            r'([a-zA-Z0-9_/-]+\.go)\s*(?:line?\s*(\d+))?\s*[:\-]\s*(.*?)(?=```suggestion|```go|\n\n|$)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.finditer(pattern, body, re.DOTALL | re.IGNORECASE)
+            for match in matches:
+                file_path = match.group(1)
+                line_num = match.group(2) if match.group(2) else None
+                description = match.group(3).strip()
+                
+                # Extract suggestions
+                suggestion_pattern = r'```suggestion\s*(.*?)```'
+                suggestions = re.findall(suggestion_pattern, body[match.end():], re.DOTALL)
+                
+                issues.append({
+                    'file': file_path,
+                    'line': line_num,
+                    'title': f"Copilot suggestion for {file_path}",
+                    'description': description,
+                    'code_suggestions': suggestions,
+                    'source': 'review_body'
+                })
+    
+    return issues
+
+def classify_priority(body, path, action):
+    """Classify issue priority based on content"""
+    high_priority_keywords = [
+        'security', 'vulnerability', 'injection', 'xss', 'authentication', 'authorization',
+        'memory leak', 'resource leak', 'deadlock', 'race condition', 'null pointer',
+        'error handling', 'exception', 'crash', 'fail', 'critical'
+    ]
+    
+    medium_priority_keywords = [
+        'performance', 'optimization', 'efficiency', 'timeout', 'connection',
+        'database', 'query', 'test', 'coverage', 'validation', 'input'
+    ]
+    
+    low_priority_keywords = [
+        'formatting', 'whitespace', 'comment', 'documentation', 'typo',
+        'naming', 'style', 'convention', 'trailing', 'spaces'
+    ]
+    
+    body_lower = body.lower()
+    action_lower = action.lower() if action else ''
+    
+    # Check file patterns for priority
+    if any(pattern in path.lower() for pattern in ['auth', 'security', 'jwt', 'password']):
+        return 'high'
+    
+    if any(pattern in path.lower() for pattern in ['test', 'spec', 'mock']):
+        return 'medium'
+    
+    # Check content patterns
+    for keyword in high_priority_keywords:
+        if keyword in body_lower or keyword in action_lower:
+            return 'high'
+    
+    for keyword in medium_priority_keywords:
+        if keyword in body_lower or keyword in action_lower:
+            return 'medium'
+    
+    for keyword in low_priority_keywords:
+        if keyword in body_lower or keyword in action_lower:
+            return 'low'
+    
+    return 'medium'  # Default
+
+def is_resolved_or_outdated(comment):
+    """Check if a comment is resolved or outdated"""
+    body = comment.get('body', '')
+    
+    # For CodeRabbit, only process comments with specific actionable markers
+    # This is the key insight: only comments with these emoji markers are actually actionable
+    actionable_markers = [
+        '_🛠️ Refactor suggestion_',
+        '_⚠️ Potential issue_',
+        '_💡 Suggestion_',
+        '_🔒 Security issue_',
+        '_🐛 Bug fix_',
+        '_⚡ Performance issue_',
+        '_📝 Documentation_',
+        '_🧹 Cleanup_',
+        '_🔧 Enhancement_',
+        '_💡 Verification agent_'
+    ]
+    
+    # If this is a CodeRabbit comment but doesn't have actionable markers, skip it
+    if 'coderabbitai' in comment.get('user', {}).get('login', '').lower():
+        has_actionable_marker = any(marker in body for marker in actionable_markers)
+        if not has_actionable_marker:
+            return True  # Skip comments without actionable markers
+    
+    # Check for explicit resolved indicators - be more specific
+    # Look for patterns that indicate the issue is actually resolved
+    body_lower = body.lower()
+    resolved_patterns = [
+        r'\b(resolved|fixed|done|completed)\b',  # Standalone words
+        r'✅.*resolved',  # Checkmark with resolved
+        r'✅ addressed in commit',  # CodeRabbit's addressed marker
+        r'this has been (resolved|fixed|addressed)',
+        r'issue (resolved|fixed)',
+        r'(no longer|not) (applicable|relevant)',
+        r'outdated.*resolved'
+    ]
+    
+    # Check for explicit resolved indicators using regex patterns
+    import re
+    for pattern in resolved_patterns:
+        if re.search(pattern, body_lower):
+            return True
+    
+    # Check if comment is in a resolved conversation
+    # GitHub API includes resolved status
+    if comment.get('in_reply_to_id') and comment.get('resolved', False):
+        return True
+        
+    return False
+
 def parse_coderabbit_comment(comment):
     """Parse a CodeRabbit comment into AI-friendly format"""
     body = comment.get('body', '')
     
     # Skip non-CodeRabbit comments
     if 'coderabbitai' not in comment.get('user', {}).get('login', '').lower():
+        return None
+    
+    # Skip resolved or outdated comments
+    if is_resolved_or_outdated(comment):
         return None
     
     # Extract file path and line
@@ -91,6 +265,9 @@ def parse_coderabbit_comment(comment):
         pattern = r'```suggestion(.*?)```'
         matches = re.findall(pattern, body, re.DOTALL)
         suggestions = [match.strip() for match in matches]
+    
+    # Try to extract detailed instruction first
+    detailed_instruction = extract_detailed_instruction(body)
     
     # Extract actionable items
     action_patterns = [
@@ -106,70 +283,227 @@ def parse_coderabbit_comment(comment):
         (r'Replace\s+(.*?)(?:\.|$)', 'replace'),
         (r'Avoid\s+(.*?)(?:\.|$)', 'avoid'),
         (r'Use\s+(.*?)(?:\.|$)', 'use'),
+        # Look for more detailed patterns
+        (r'In\s+[^,]+around lines?\s+\d+(?:\s+to\s+\d+)?,\s+(.*?)(?:\.|Replace|Consider|This)', 'detailed_fix'),
     ]
     
     action = None
     action_type = 'general'
     
-    for pattern, fix_type in action_patterns:
-        match = re.search(pattern, body, re.IGNORECASE)
-        if match:
-            action = match.group(1).strip()
-            action = re.sub(r'\s+', ' ', action)
-            action_type = fix_type
-            break
+    # Use detailed instruction if available
+    if detailed_instruction:
+        action = detailed_instruction
+        action_type = 'detailed_fix'
+    else:
+        for pattern, fix_type in action_patterns:
+            match = re.search(pattern, body, re.IGNORECASE | re.DOTALL)
+            if match:
+                action = match.group(1).strip()
+                action = re.sub(r'\s+', ' ', action)
+                action_type = fix_type
+                break
     
     if not action:
         # Try to extract the main point from the comment
         lines = body.split('\n')
         for line in lines:
             line = line.strip()
-            if line and not line.startswith(('>', '#', '-', '*', '```')):
+            if line and not line.startswith(('>', '#', '-', '*', '```', '<')):
                 action = line[:200]
                 break
     
     if not action:
         return None
     
+    # Classify priority
+    priority = classify_priority(body, path, action)
+    
     return {
         'file': path,
         'line': line,
         'action': action,
         'type': action_type,
+        'priority': priority,
         'suggestions': suggestions,
-        'full_comment': body[:500] + '...' if len(body) > 500 else body
+        'detailed_instruction': detailed_instruction,
+        'full_comment': body[:1000] + '...' if len(body) > 1000 else body  # Increased limit
     }
 
-def format_ai_prompts(parsed_comments):
+def format_ai_prompts(parsed_comments, prioritize=False):
     """Format parsed comments into AI prompts"""
     prompts = []
     
+    # Sort by priority if requested
+    if prioritize:
+        priority_order = {'high': 0, 'medium': 1, 'low': 2}
+        parsed_comments = sorted(parsed_comments, key=lambda x: priority_order.get(x.get('priority', 'medium'), 1))
+    
     # Add instructions to avoid creating new CodeRabbit issues
     instructions = """
-IMPORTANT: When making changes, be careful to avoid creating new issues that CodeRabbit will flag in aggressive mode:
-- Avoid adding extra spaces or trailing whitespace
-- Use consistent log levels (prefer log.Printf over logger.Printf unless specifically needed)
-- Maintain consistent indentation and formatting
-- Don't introduce unnecessary blank lines or remove necessary ones
-- Keep existing code style and conventions
-- Only make the specific changes requested, not additional "improvements"
-"""
+🚨 MANDATORY EXECUTION PROTOCOL - FAILURE TO FOLLOW RESULTS IN 100+ NEW CODERABBIT ISSUES 🚨
+
+⚠️  WARNING: Previous attempts at fixing these issues created cascading failures, breaking builds, and generating dozens of new CodeRabbit comments. You MUST follow this protocol EXACTLY or you will create more problems than you solve.
+
+🔒 MANDATORY PRE-WORK REQUIREMENTS:
+1. You MUST use TodoWrite tool to create individual todos for EVERY issue listed below before making any changes
+2. You MUST verify make lint, make validate, make test commands exist and work before starting
+3. You MUST read the full context of any file before editing it
+4. NEVER proceed until these requirements are met
+
+⛔ SEQUENTIAL EXECUTION LOCKDOWN:
+- You MUST work on ONE issue at a time, NEVER multiple simultaneously  
+- You MUST mark each todo as "in_progress" before working on it
+- You MUST run full validation (make lint, make validate, make test) after EVERY single edit
+- You MUST fix any validation failures immediately before proceeding
+- You MUST mark todo as "completed" only after validation passes
+- NEVER move to the next issue until current one is 100% complete with passing validation
+
+🚫 ABSOLUTELY PROHIBITED ACTIONS (Violation creates cascading failures):
+- Making any "improvements" not explicitly requested in the issue
+- Changing multiple files for one issue unless explicitly required
+- Adding new imports, dependencies, or variables unless explicitly required
+- Modifying function signatures unless explicitly required
+- Adding comments, documentation, or formatting changes unless explicitly required
+- Batching multiple edits before validation
+- Proceeding when validation fails
+- Claiming completion without running final validation
+- Creating files without proper EOF newlines (causes lint failures)
+- Creating markdown files that don't pass markdownlint (causes build failures)
+
+📋 MANDATORY COMPLETION CRITERIA:
+Before claiming ANY work is complete, you MUST:
+1. Use TodoRead tool to verify ALL todos are marked "completed"
+2. Run make lint, make validate, make test and confirm ALL pass
+3. Confirm no new files were created unless explicitly required
+4. Confirm no unrelated code was modified
+5. NEVER say "done" or "completed" until ALL criteria are met
+
+🔧 VALIDATION PROTOCOL (MANDATORY after every edit):
+1. Run: make lint (fix any new issues immediately)
+2. Run: make validate (fix any new issues immediately) 
+3. Run: make test (fix any new issues immediately)
+4. If ANY command fails, you MUST revert the change and try a different approach
+5. NEVER proceed to next issue until ALL validation passes
+
+⚡ ERROR RECOVERY PROTOCOL:
+If validation fails after your edit:
+1. IMMEDIATELY revert the exact change you made
+2. Re-read the original issue and file context
+3. Try a more minimal approach
+4. If still failing, ask for clarification rather than guessing
+5. NEVER leave the codebase in a broken state
+
+🎯 CHANGE MINIMIZATION RULES:
+- Read the entire file before making any edits to understand context
+- Use exact string matching for all edits - preserve whitespace, indentation, line endings
+- Make ONLY the specific change requested, nothing more
+- If the issue is unclear, ask for clarification rather than assuming
+- Test your change in isolation before moving on
+
+📁 MANDATORY FILE CREATION STANDARDS (CRITICAL - prevents lint failures):
+When creating ANY new file, you MUST:
+1. ALWAYS end files with a single newline character (EOF newline) - missing this causes lint failures
+2. For Markdown files (.md), ensure they pass markdownlint by following these rules:
+   - Use proper heading hierarchy (# then ## then ### - no skipping levels)
+   - Add blank lines before and after headings
+   - Use consistent list markers (- for unordered, 1. for ordered)
+   - Wrap long lines at 80-100 characters
+   - End file with single newline
+   - No trailing whitespace on any line
+3. For all code files:
+   - Follow existing project indentation (tabs vs spaces)
+   - Maintain consistent line endings (LF vs CRLF)
+   - Include proper file encoding (UTF-8 unless project specifies otherwise)
+   - End with single newline character
+4. ALWAYS run relevant linters on newly created files:
+   - markdownlint for .md files
+   - Project-specific linters for code files
+   - Fix ALL linting errors before marking task complete
+
+💀 CONSEQUENCES OF RULE VIOLATIONS:
+- Creating new lint errors = 10+ new CodeRabbit comments
+- Breaking tests = 20+ new CodeRabbit comments  
+- Making unrequested changes = 30+ new CodeRabbit comments
+- Not following sequential process = Incomplete fixes and another full review cycle
+- Each violation wastes hours of developer time and delays merging
+
+✅ SUCCESS METRICS:
+- ALL issues in todo list marked completed
+- ALL validation commands pass
+- ZERO new CodeRabbit issues created
+- ZERO unrelated code modified
+- Build remains stable and tests pass
+
+REMEMBER: The goal is to fix ALL issues perfectly in ONE attempt. Creating even one new issue means the entire process failed."""
     
     for i, comment in enumerate(parsed_comments, 1):
         if not comment:
             continue
             
-        prompt = f"Fix #{i} in {comment['file']}"
+        # Build comprehensive task prompt
+        file_location = f"{comment['file']}"
         if comment.get('line'):
-            prompt += f" at line {comment['line']}"
-        prompt += f": {comment['action']}"
+            file_location += f":line {comment['line']}"
+            
+        # Use detailed instruction if available, otherwise use action
+        task_description = comment.get('detailed_instruction') or comment['action']
         
+        prompt = f"""
+🔧 TASK #{i}: {file_location}
+
+📝 ISSUE: {task_description}"""
+
+        # Add suggestions if available
         if comment.get('suggestions'):
-            prompt += f"\n\nSuggested change:\n```\n{comment['suggestions'][0]}\n```"
-        
-        # Add the instructions to the first prompt
+            prompt += f"""
+
+💡 SUGGESTED FIX:
+```
+{comment['suggestions'][0]}
+```"""
+
+        # Add mandatory execution steps
+        prompt += f"""
+
+✅ MANDATORY EXECUTION STEPS:
+1. Use TodoWrite to add this task to your todo list
+2. Mark this task as "in_progress" before starting
+3. Read the entire file {comment['file']} to understand context
+4. Make ONLY the minimal change required to fix this issue
+5. If creating new files, ENSURE they have proper EOF newlines and pass linting
+6. Run validation: make lint && make validate && make test
+7. Fix any validation failures immediately
+8. Mark task as "completed" only after all validation passes
+9. NEVER proceed to next task until this one is 100% complete
+
+🚫 DO NOT:
+- Make any changes not directly related to this issue
+- Add imports, comments, or formatting unless explicitly required
+- Modify other files unless explicitly required for this fix
+- Create files without EOF newlines (causes lint failures)
+- Create markdown files that fail markdownlint
+- Proceed if validation fails
+
+🎯 SUCCESS CRITERIA:
+- Issue is fixed exactly as described
+- All validation commands pass: make lint && make validate && make test
+- Any new files created have proper formatting and pass linting
+- No new issues introduced
+- Todo marked as "completed\""""
+
+        # Add the global instructions to the first prompt only
         if i == 1:
             prompt = instructions + "\n\n" + prompt
+            
+            # Add pre-flight checks to first task
+            prompt += """
+
+🚨 MANDATORY PRE-FLIGHT CHECKS (Run these BEFORE starting any work):
+1. Verify make lint command exists and works
+2. Verify make validate command exists and works  
+3. Verify make test command exists and works
+4. Use TodoWrite to create todos for ALL tasks in this list
+5. NEVER start actual fixes until all pre-flight checks pass"""
         
         prompts.append({
             'id': i,
@@ -189,14 +523,14 @@ def format_for_cursor(prompts):
     
     return cursor_tasks
 
-def main(pr_number, repo_name=None):
-    print(f"Fetching CodeRabbit comments for PR #{pr_number}...")
+def main(pr_number, repo_name=None, prioritize=False):
+    print(f"Fetching CodeRabbit and Copilot comments for PR #{pr_number}...")
     
-    # Get all PR comments
+    # Get all PR comments and reviews
     comments = get_pr_comments(pr_number, repo_name)
     reviews = get_pr_reviews(pr_number, repo_name)
     
-    # Parse CodeRabbit comments
+    # Parse individual line comments (existing functionality)
     parsed = []
     
     for comment in comments:
@@ -204,16 +538,72 @@ def main(pr_number, repo_name=None):
         if parsed_comment:
             parsed.append(parsed_comment)
     
-    # Also check review comments
+    # Parse review body comments (NEW - this is what was missing!)
+    current_file_context = None
     for review in reviews:
-        if 'coderabbitai' in review.get('user', {}).get('login', '').lower():
-            body = review.get('body', '')
+        user_login = review.get('user', {}).get('login', '').lower()
+        body = review.get('body', '')
+        
+        if 'coderabbitai' in user_login:
+            # Skip if review is resolved/outdated
+            if is_resolved_or_outdated(review):
+                continue
+                
+            # Extract issues from CodeRabbit review body
+            review_issues = extract_review_body_issues(body, "coderabbit")
+            for issue in review_issues:
+                # Convert to our standard format
+                parsed_comment = {
+                    'file': issue['file'],
+                    'line': issue['line'],
+                    'action': f"{issue['title']} {issue['description']}",
+                    'type': 'review_body_fix',
+                    'priority': classify_priority(issue['description'], issue['file'], issue['title']),
+                    'suggestions': issue['code_suggestions'],
+                    'detailed_instruction': f"In {issue['file']} around lines {issue['line']}, {issue['description']}",
+                    'full_comment': f"{issue['title']}: {issue['description']}"
+                }
+                parsed.append(parsed_comment)
+                
+        elif 'copilot' in user_login:
+            # Skip if review is resolved/outdated
+            if is_resolved_or_outdated(review):
+                continue
+                
+            # Extract issues from Copilot review body
+            review_issues = extract_review_body_issues(body, "copilot")
+            for issue in review_issues:
+                parsed_comment = {
+                    'file': issue['file'],
+                    'line': issue['line'],
+                    'action': f"{issue['title']} {issue['description']}",
+                    'type': 'copilot_suggestion',
+                    'priority': classify_priority(issue['description'], issue['file'], issue['title']),
+                    'suggestions': issue['code_suggestions'],
+                    'detailed_instruction': f"In {issue['file']} around line {issue['line']}, {issue['description']}",
+                    'full_comment': f"{issue['title']}: {issue['description']}"
+                }
+                parsed.append(parsed_comment)
+        
+        # Also check old review comment processing (for compatibility)
+        if 'coderabbitai' in user_login and not is_resolved_or_outdated(review):
             parsed_comment = parse_coderabbit_comment({'body': body, 'path': 'general', 'user': review.get('user')})
             if parsed_comment:
                 parsed.append(parsed_comment)
     
+    # Remove duplicates based on file, line, and action similarity
+    unique_parsed = []
+    seen = set()
+    for comment in parsed:
+        key = (comment['file'], comment.get('line'), comment['action'][:100])  # First 100 chars of action
+        if key not in seen:
+            seen.add(key)
+            unique_parsed.append(comment)
+    
+    print(f"Found {len(comments)} line comments, {len(reviews)} reviews, extracted {len(unique_parsed)} unique unresolved issues")
+    
     # Format into AI prompts
-    ai_prompts = format_ai_prompts(parsed)
+    ai_prompts = format_ai_prompts(unique_parsed, prioritize)
     cursor_format = format_for_cursor(ai_prompts)
     
     # Output
@@ -229,9 +619,17 @@ def main(pr_number, repo_name=None):
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print("Usage: coderabbit_ai_formatter.py <pr_number> [repo_name]")
+        print("Usage: coderabbit_ai_formatter.py <pr_number> [repo_name] [--prioritize]")
         sys.exit(1)
     
     pr_number = int(sys.argv[1])
-    repo_name = sys.argv[2] if len(sys.argv) > 2 else None
-    main(pr_number, repo_name)
+    repo_name = None
+    prioritize = False
+    
+    for arg in sys.argv[2:]:
+        if arg == '--prioritize':
+            prioritize = True
+        else:
+            repo_name = arg
+    
+    main(pr_number, repo_name, prioritize)
