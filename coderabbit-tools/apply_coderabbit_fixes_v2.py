@@ -126,46 +126,82 @@ class FixApplicator:
         
         return self.write_file_lines(file_path, lines)
     
+    def detect_coderabbit_severity(self, comment: Dict) -> str:
+        """Detect CodeRabbit's own severity classification."""
+        body = comment.get('body_preview', '') or comment.get('full_body', '')
+        
+        if '⚠️ Potential issue' in body:
+            return 'potential_issue'
+        elif '🛠️ Refactor suggestion' in body:
+            return 'refactor_suggestion'  
+        elif '🧹 Nitpick (assertive)' in body:
+            return 'nitpick_assertive'
+        elif '💡 Verification agent' in body:
+            return 'verification'
+        else:
+            return 'unknown_severity'
+
     def detect_fix_type(self, comment: Dict) -> Tuple[str, Dict]:
         """Detect what type of fix should be applied based on the comment."""
         prompt = comment['prompts'][0] if comment['prompts'] else ""
         
-        # Common fix patterns
+        # First check CodeRabbit's own severity classification
+        severity = self.detect_coderabbit_severity(comment)
+        
+        # Enhanced fix patterns including security-specific patterns
         fix_patterns = {
             'input_validation': [
                 'validate.*input', 'check.*parameter', 'ensure.*valid',
-                'negative.*value', 'non-positive', 'invalid.*range'
+                'negative.*value', 'non-positive', 'invalid.*range',
+                'sanitize.*input', 'escape.*html', 'prevent.*injection'
             ],
             'error_handling': [
                 'error.*handling', 'handle.*error', 'catch.*exception',
-                'proper.*error', 'error.*message'
+                'proper.*error', 'error.*message', 'panic.*recovery'
+            ],
+            'security_fix': [
+                'security.*issue', 'vulnerability', 'unsafe.*eval',
+                'csrf.*protection', 'xss.*prevention', 'sql.*injection',
+                'trust.*proxy', 'correlation.*id.*collision', 'executable.*file',
+                'utf-8.*validation', 'double.*extension', 'panic.*recovery'
             ],
             'test_fix': [
                 'test.*coverage', 'add.*test', 'unit.*test',
-                'test.*case', 'error.*message.*test'
+                'test.*case', 'error.*message.*test', 'floating.*point.*comparison',
+                'assert.*equal', 'parallel.*test'
             ],
             'format_fix': [
                 'missing.*backtick', 'close.*code.*block', 'format.*issue',
-                'markdown.*rendering'
+                'markdown.*rendering', 'json.*encoding'
             ],
             'import_fix': [
                 'import.*package', 'add.*import', 'missing.*import'
             ],
             'config_fix': [
-                'configuration.*error', 'yaml.*error', 'config.*format'
+                'configuration.*error', 'yaml.*error', 'config.*format',
+                'path.*filter', 'coderabbit.*yaml'
+            ],
+            'performance_fix': [
+                'memory.*limit', 'memory.*exhaustion', 'correlation.*id.*generation',
+                'magic.*number', 'file.*permission'
             ]
         }
         
-        # Detect fix type
+        # Detect fix type based on content patterns
         fix_type = 'unknown'
         for ftype, patterns in fix_patterns.items():
             if any(re.search(pattern, prompt, re.IGNORECASE) for pattern in patterns):
                 fix_type = ftype
                 break
         
+        # If no pattern matched, use severity as the type
+        if fix_type == 'unknown' and severity != 'unknown_severity':
+            fix_type = severity
+        
         # Extract specific instructions
         instructions = {
             'type': fix_type,
+            'severity': severity,
             'file_path': comment.get('file_path') or comment.get('path'),
             'start_line': comment.get('start_line'),
             'end_line': comment.get('end_line'),
@@ -351,8 +387,28 @@ Chain with other tools:
     
     parser.add_argument(
         '--filter-type',
-        choices=['format_fix', 'input_validation', 'error_handling', 'test_fix', 'config_fix'],
+        choices=[
+            'format_fix', 'input_validation', 'error_handling', 'test_fix', 'config_fix',
+            'security_fix', 'performance_fix', 'import_fix',
+            # CodeRabbit severity levels
+            'potential_issue', 'refactor_suggestion', 'nitpick_assertive', 'verification',
+            # Combined options
+            'high_priority',    # potential_issue + security_fix + error_handling + input_validation
+            'all_issues'        # everything including nitpicks
+        ],
         help='Only apply fixes of this type'
+    )
+    
+    parser.add_argument(
+        '--include-nitpicks',
+        action='store_true',
+        help='Include nitpick (assertive) comments that are normally filtered out'
+    )
+
+    parser.add_argument(
+        '--exclude-low-priority', 
+        action='store_true',
+        help='Exclude low-priority suggestions and nitpicks'
     )
     
     args = parser.parse_args()
@@ -376,16 +432,67 @@ Chain with other tools:
         print("No comments found in analysis data", file=sys.stderr)
         sys.exit(1)
     
-    # Filter by type if specified
+    # Apply filtering logic
+    original_count = len(comments)
+    filtered_comments = []
+    
+    # Count types for summary
+    type_counts = {}
+    unknown_count = 0
+    
+    for comment in comments:
+        applicator = FixApplicator()  # Temporary instance for detection
+        fix_type, instructions = applicator.detect_fix_type(comment)
+        severity = instructions.get('severity', 'unknown_severity')
+        
+        # Count types for reporting
+        type_counts[fix_type] = type_counts.get(fix_type, 0) + 1
+        if fix_type == 'unknown':
+            unknown_count += 1
+        
+        # Apply filtering logic
+        should_include = True
+        
+        # Exclude low-priority items if requested
+        if args.exclude_low_priority:
+            if severity in ['nitpick_assertive', 'verification'] or fix_type in ['nitpick_assertive', 'verification']:
+                should_include = False
+        
+        # Include nitpicks if explicitly requested
+        if args.include_nitpicks:
+            should_include = True
+        
+        # Filter by specific type
+        if args.filter_type:
+            if args.filter_type == 'high_priority':
+                should_include = fix_type in ['potential_issue', 'security_fix', 'error_handling', 'input_validation'] or severity == 'potential_issue'
+            elif args.filter_type == 'all_issues':
+                should_include = True
+            else:
+                should_include = (fix_type == args.filter_type) or (severity == args.filter_type)
+        
+        if should_include:
+            filtered_comments.append(comment)
+    
+    comments = filtered_comments
+    
+    # Enhanced summary with unknown count warning
+    print(f"📊 Comment Analysis Summary:")
+    print(f"  Total comments: {original_count}")
+    print(f"  After filtering: {len(comments)}")
+    print(f"  Unknown types: {unknown_count}")
+    
+    if unknown_count > 0:
+        print(f"⚠️  WARNING: {unknown_count} comments have unknown types - CodeRabbit may have introduced new comment types!")
+        print(f"   Consider reviewing these manually or updating the tool patterns.")
+    
+    print(f"\n📋 By Type:")
+    for fix_type, count in sorted(type_counts.items()):
+        status = "✓" if fix_type != 'unknown' else "❓"
+        print(f"  {status} {fix_type}: {count}")
+    
     if args.filter_type:
-        filtered_comments = []
-        for comment in comments:
-            applicator = FixApplicator()  # Temporary instance for detection
-            fix_type, _ = applicator.detect_fix_type(comment)
-            if fix_type == args.filter_type:
-                filtered_comments.append(comment)
-        comments = filtered_comments
-        print(f"Filtered to {len(comments)} comments of type '{args.filter_type}'")
+        print(f"\n🔍 Applied filter: {args.filter_type}")
     
     # Apply fixes
     applicator = FixApplicator(

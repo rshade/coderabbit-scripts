@@ -112,7 +112,15 @@ This script chains together:
     
     parser.add_argument(
         '--filter-type',
-        choices=['format_fix', 'input_validation', 'error_handling', 'test_fix', 'config_fix'],
+        choices=[
+            'format_fix', 'input_validation', 'error_handling', 'test_fix', 'config_fix',
+            'security_fix', 'performance_fix', 'import_fix',
+            # CodeRabbit severity levels
+            'potential_issue', 'refactor_suggestion', 'nitpick_assertive', 'verification',
+            # Combined options
+            'high_priority',    # potential_issue + security_fix + error_handling + input_validation
+            'all_issues'        # everything including nitpicks
+        ],
         help='Only apply fixes of this type'
     )
     
@@ -147,6 +155,12 @@ This script chains together:
     )
     
     parser.add_argument(
+        '--gemini-format',
+        action='store_true',
+        help='Use Gemini formatter to generate structured prompts instead of applying fixes'
+    )
+    
+    parser.add_argument(
         '--skip-validation',
         action='store_true',
         help='Skip pre-validation checks (make lint, validate, test)'
@@ -156,6 +170,18 @@ This script chains together:
         '--prioritize',
         action='store_true',
         help='Group issues by priority (high/medium/low) for systematic fixing'
+    )
+    
+    parser.add_argument(
+        '--include-nitpicks',
+        action='store_true',
+        help='Include nitpick (assertive) comments that are normally filtered out'
+    )
+
+    parser.add_argument(
+        '--exclude-low-priority', 
+        action='store_true',
+        help='Exclude low-priority suggestions and nitpicks'
     )
     
     args = parser.parse_args()
@@ -172,7 +198,7 @@ This script chains together:
     
     # Find scripts
     try:
-        if args.ai_format:
+        if args.ai_format or args.gemini_format:
             ai_format_script = find_script('coderabbit_ai_formatter.py')
         else:
             fetch_script = find_script('fetch_github_comments.py')
@@ -221,13 +247,15 @@ This script chains together:
                 print(f"⚠️  {desc} command not found (make {cmd[1]})")
     
     try:
-        if args.ai_format:
+        if args.ai_format or args.gemini_format:
             # Use AI formatter directly
             ai_cmd = ['python3', ai_format_script, pr_arg]
             if repo_arg:
                 ai_cmd.append(repo_arg)
             if args.prioritize:
                 ai_cmd.append('--prioritize')
+            if args.gemini_format:
+                ai_cmd.append('--gemini')
             
             ai_result = run_command(ai_cmd, "Generating AI-formatted prompts")
             print("✅ AI-formatted prompts generated")
@@ -288,6 +316,12 @@ This script chains together:
             
             if args.verbose:
                 apply_cmd.append('--verbose')
+            
+            if args.include_nitpicks:
+                apply_cmd.append('--include-nitpicks')
+            
+            if args.exclude_low_priority:
+                apply_cmd.append('--exclude-low-priority')
             
             apply_result = run_command(apply_cmd, "Applying fixes")
             print(f"✅ Fixes applied")

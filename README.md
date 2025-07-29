@@ -2,9 +2,110 @@
 
 A set of Python utilities for automatically processing CodeRabbit review comments and applying suggested fixes across multiple repositories.
 
-## Tools Overview
+## Shell Script Commands
 
-### 1. `fetch_github_comments.py`
+### Main Pipeline Commands
+
+#### `coderabbit-fix`
+Complete pipeline - fetches, parses, and applies CodeRabbit fixes from a GitHub PR.
+
+```bash
+# Fix current repo
+coderabbit-fix 149
+
+# Fix specific repo
+coderabbit-fix rshade/cronai 149
+
+# Dry run (preview changes)
+coderabbit-fix 149 --dry-run
+
+# Filter by fix type
+coderabbit-fix 149 --filter-type format_fix
+
+# Verbose output
+coderabbit-fix 149 --verbose
+
+# Keep intermediate files for debugging
+coderabbit-fix 149 --keep-files --output-dir ./debug
+```
+
+### Individual Tool Commands
+
+#### `coderabbit-fetch`
+Fetches GitHub PR comments using the `gh` CLI.
+
+```bash
+# Fetch from current repo (auto-detect from git remote)
+coderabbit-fetch 149
+
+# Fetch from specific repo
+coderabbit-fetch rshade/cronai 149
+
+# Save to custom file
+coderabbit-fetch 149 --output my_comments.json
+
+# Just show summary
+coderabbit-fetch 149 --format summary
+```
+
+#### `coderabbit-parse`
+Parses CodeRabbit comments and extracts AI prompts and code suggestions.
+
+```bash
+# Parse from default input file
+coderabbit-parse
+
+# Parse from specific file
+coderabbit-parse --input my_comments.json
+
+# Parse from stdin (for chaining)
+cat comments.json | coderabbit-parse --input -
+
+# Just show summary
+coderabbit-parse --summary-only
+```
+
+#### `coderabbit-apply`
+Applies fixes based on CodeRabbit AI prompts and suggestions.
+
+```bash
+# Apply fixes from analysis file
+coderabbit-apply
+
+# Dry run to see what would change
+coderabbit-apply --dry-run
+
+# Apply only specific types of fixes
+coderabbit-apply --filter-type format_fix
+
+# Apply to specific directory
+coderabbit-apply --base-path /path/to/repo
+
+# Verbose output
+coderabbit-apply --verbose
+```
+
+### Validation and Linting
+
+#### `coderabbit-linter`
+Pre-commit linting tool to catch common CodeRabbit issues.
+
+```bash
+# Run linter on current directory
+coderabbit-linter
+
+# Run with verbose output
+coderabbit-linter --verbose
+
+# Check specific files
+coderabbit-linter file1.go file2.py
+```
+
+## Python Tools (Direct Usage)
+
+### Core Tools
+
+#### `fetch_github_comments.py`
 Fetches all comments from a GitHub PR using the `gh` CLI.
 
 **Features:**
@@ -16,19 +117,19 @@ Fetches all comments from a GitHub PR using the `gh` CLI.
 **Usage:**
 ```bash
 # Fetch from current repo (auto-detect from git remote)
-python3 fetch_github_comments.py 149
+python3 coderabbit-tools/fetch_github_comments.py 149
 
 # Fetch from specific repo
-python3 fetch_github_comments.py rshade/cronai 149
+python3 coderabbit-tools/fetch_github_comments.py rshade/cronai 149
 
 # Save to custom file
-python3 fetch_github_comments.py 149 --output my_comments.json
+python3 coderabbit-tools/fetch_github_comments.py 149 --output my_comments.json
 
 # Just show summary
-python3 fetch_github_comments.py 149 --format summary
+python3 coderabbit-tools/fetch_github_comments.py 149 --format summary
 ```
 
-### 2. `parse_coderabbit_comments_v2.py`
+#### `parse_coderabbit_comments_v2.py`
 Parses CodeRabbit comments and extracts AI prompts and code suggestions.
 
 **Features:**
@@ -40,19 +141,19 @@ Parses CodeRabbit comments and extracts AI prompts and code suggestions.
 **Usage:**
 ```bash
 # Parse from default input file
-python3 parse_coderabbit_comments_v2.py
+python3 coderabbit-tools/parse_coderabbit_comments_v2.py
 
 # Parse from specific file
-python3 parse_coderabbit_comments_v2.py --input my_comments.json
+python3 coderabbit-tools/parse_coderabbit_comments_v2.py --input my_comments.json
 
 # Parse from stdin (for chaining)
-cat comments.json | python3 parse_coderabbit_comments_v2.py --input -
+cat comments.json | python3 coderabbit-tools/parse_coderabbit_comments_v2.py --input -
 
 # Just show summary
-python3 parse_coderabbit_comments_v2.py --summary-only
+python3 coderabbit-tools/parse_coderabbit_comments_v2.py --summary-only
 ```
 
-### 3. `apply_coderabbit_fixes_v2.py`
+#### `apply_coderabbit_fixes_v2.py`
 Applies fixes based on CodeRabbit AI prompts and suggestions.
 
 **Features:**
@@ -64,22 +165,22 @@ Applies fixes based on CodeRabbit AI prompts and suggestions.
 **Usage:**
 ```bash
 # Apply fixes from analysis file
-python3 apply_coderabbit_fixes_v2.py
+python3 coderabbit-tools/apply_coderabbit_fixes_v2.py
 
 # Dry run to see what would change
-python3 apply_coderabbit_fixes_v2.py --dry-run
+python3 coderabbit-tools/apply_coderabbit_fixes_v2.py --dry-run
 
 # Apply only specific types of fixes
-python3 apply_coderabbit_fixes_v2.py --filter-type format_fix
+python3 coderabbit-tools/apply_coderabbit_fixes_v2.py --filter-type format_fix
 
 # Apply to specific directory
-python3 apply_coderabbit_fixes_v2.py --base-path /path/to/repo
+python3 coderabbit-tools/apply_coderabbit_fixes_v2.py --base-path /path/to/repo
 
 # Verbose output
-python3 apply_coderabbit_fixes_v2.py --verbose
+python3 coderabbit-tools/apply_coderabbit_fixes_v2.py --verbose
 ```
 
-### 4. `coderabbit_pipeline.py`
+#### `coderabbit_pipeline.py`
 Complete workflow that chains all tools together.
 
 **Features:**
@@ -90,39 +191,64 @@ Complete workflow that chains all tools together.
 
 **Usage:**
 ```bash
-# Process PR 149 in current repo (after pip install)
-coderabbit-pipeline 149
+# Process PR 149 in current repo
+python3 coderabbit-tools/coderabbit_pipeline.py 149
 
 # Process specific repo and PR
-coderabbit-pipeline rshade/cronai 149
+python3 coderabbit-tools/coderabbit_pipeline.py rshade/cronai 149
 
 # Dry run to see what would change
-coderabbit-pipeline 149 --dry-run
+python3 coderabbit-tools/coderabbit_pipeline.py 149 --dry-run
 
 # Only apply specific fix types
-coderabbit-pipeline 149 --filter-type format_fix
+python3 coderabbit-tools/coderabbit_pipeline.py 149 --filter-type format_fix
 
 # Keep intermediate files for debugging
-coderabbit-pipeline 149 --keep-files --output-dir ./debug
+python3 coderabbit-tools/coderabbit_pipeline.py 149 --keep-files --output-dir ./debug
 
 # Verbose output
-coderabbit-pipeline 149 --verbose
+python3 coderabbit-tools/coderabbit_pipeline.py 149 --verbose
 ```
+
+### Specialized Tools
+
+#### `coderabbit_fast.py`
+Fast processing mode for quick fixes.
+
+#### `coderabbit_ai_only.py`
+AI-only processing without applying fixes.
+
+#### `coderabbit_ai_formatter.py`
+Enhanced AI formatter for CodeRabbit fixes.
+
+#### `coderabbit_linter.py`
+Linting validation tool.
+
+#### `validate_linters.py`
+Linter validation utilities.
 
 ## Chaining Tools
 
 You can chain the tools together manually for more control:
 
 ```bash
-# Fetch -> Parse -> Apply
-python3 fetch_github_comments.py 149 | \
-python3 parse_coderabbit_comments_v2.py --input - | \
-python3 apply_coderabbit_fixes_v2.py --input - --dry-run
+# Using shell commands
+coderabbit-fetch 149 | coderabbit-parse --input - | coderabbit-apply --input - --dry-run
 
 # Or save intermediate files
-python3 fetch_github_comments.py 149 --output comments.json
-python3 parse_coderabbit_comments_v2.py --input comments.json --output analysis.json
-python3 apply_coderabbit_fixes_v2.py --input analysis.json --dry-run
+coderabbit-fetch 149 --output comments.json
+coderabbit-parse --input comments.json --output analysis.json
+coderabbit-apply --input analysis.json --dry-run
+
+# Using Python tools directly
+python3 coderabbit-tools/fetch_github_comments.py 149 | \
+python3 coderabbit-tools/parse_coderabbit_comments_v2.py --input - | \
+python3 coderabbit-tools/apply_coderabbit_fixes_v2.py --input - --dry-run
+
+# Or save intermediate files
+python3 coderabbit-tools/fetch_github_comments.py 149 --output comments.json
+python3 coderabbit-tools/parse_coderabbit_comments_v2.py --input comments.json --output analysis.json
+python3 coderabbit-tools/apply_coderabbit_fixes_v2.py --input analysis.json --dry-run
 ```
 
 ## Requirements
@@ -293,6 +419,9 @@ coderabbit-fix 149 --filter-type format_fix
 
 # Verbose output
 coderabbit-fix 149 --verbose
+
+# Run linter validation
+coderabbit-linter
 ```
 
 ### Common Workflows
@@ -333,6 +462,13 @@ coderabbit-fetch 149 --output comments.json
 coderabbit-parse --input comments.json --output analysis.json
 cat analysis.json | jq '.total_comments'
 coderabbit-apply --input analysis.json --dry-run
+```
+
+#### 5. Validation Workflow
+```bash
+# Fix issues and validate
+coderabbit-fix 149
+coderabbit-linter --verbose
 ```
 
 ## Location of Tools
